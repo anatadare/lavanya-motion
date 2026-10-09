@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "motion-prompt-bot",
+  "main": "index.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // ekstrak frame dari video (Media Transformations)
+  "media": { "binding": "MEDIA" },
+
+  // pipeline panjang (download -> analisis -> tulis prompt) jalan di Workflow
+  "workflows": [
+    {
+      "name": "motion-prompt-pipeline",
+      "binding": "PIPELINE",
+      "class_name": "MotionPipeline"
+    }
+  ],
+
+  // non-rahasia. Rahasia (token/key) diisi lewat dashboard sebagai Secret
+  "vars": {
+    "VISION_MODELS": "grok-4.6,qwen3.8-27b,mimo-v2.5",
+    "TEXT_MODELS": "jev-1.13,nemotron-3-super",
+    "MAX_FRAMES": "6",
+    "ALLOWED_USER_IDS": ""
+  }
+}
