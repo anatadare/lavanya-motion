@@ -144,6 +144,47 @@ async function chat(env, models, messages, { maxTokens = 1500, temperature = 0.4
   throw new Error(`Semua model gagal: ${lastErr?.message}`);
 }
 
+// ------------------------------------------------------------------ durasi video
+// Telegram TIDAK mengirim "duration" kalau video dikirim sebagai File/Document,
+// jadi durasi dibaca langsung dari header MP4/MOV (atom mvhd). Hasil 0 = tidak terbaca.
+function readMp4Duration(buf) {
+  try {
+    const u8 = new Uint8Array(buf);
+    const dv = new DataView(buf);
+    const walk = (start, end) => {
+      let pos = start;
+      while (pos + 8 <= end) {
+        let size = dv.getUint32(pos);
+        const type = String.fromCharCode(u8[pos + 4], u8[pos + 5], u8[pos + 6], u8[pos + 7]);
+        let header = 8;
+        if (size === 1) {
+          size = Number(dv.getBigUint64(pos + 8));
+          header = 16;
+        } else if (size === 0) {
+          size = end - pos;
+        }
+        if (size < header) return 0;
+        if (type === "moov") {
+          const d = walk(pos + header, Math.min(end, pos + size));
+          if (d) return d;
+        } else if (type === "mvhd") {
+          const v = u8[pos + header];
+          const p = pos + header;
+          const timescale = v === 1 ? dv.getUint32(p + 20) : dv.getUint32(p + 12);
+          const dur = v === 1 ? Number(dv.getBigUint64(p + 24)) : dv.getUint32(p + 16);
+          return timescale > 0 ? dur / timescale : 0;
+        }
+        pos += size;
+      }
+      return 0;
+    };
+    const d = walk(0, buf.byteLength);
+    return d > 0 && d < 36000 ? +d.toFixed(2) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ------------------------------------------------------------------ segment planning
 function planSegments(env, durationIn) {
   const dur = durationIn > 0 ? durationIn : num(env.MAX_DURATION, 30, 5, 30); // durasi tak diketahui: asumsikan maks, segmen tanpa frame dibuang
@@ -273,7 +314,30 @@ export class MotionPipeline extends WorkflowEntrypoint {
         : Promise.resolve();
 
     try {
-      const segs = planSegments(env, p.duration);
+      const filePath = await step.do(
+        "siapkan file",
+        { retries: { limit: 2, delay: "3 seconds" }, timeout: "30 seconds" },
+        async () => (await tg(env, "getFile", { file_id: p.fileId })).file_path,
+      );
+
+      // durasi sebenarnya: pakai dari Telegram kalau ada, kalau tidak baca dari file
+      const duration = await step.do(
+        "cek durasi",
+        { retries: { limit: 1, delay: "3 seconds" }, timeout: "2 minutes" },
+        async () => {
+          if (p.duration > 0) return p.duration;
+          const res = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`);
+          if (!res.ok) throw new NonRetryableError(`Gagal download video (${res.status})`);
+          return readMp4Duration(await res.arrayBuffer());
+        },
+      );
+
+      const maxDur = num(env.MAX_DURATION, 30, 5, 30);
+      if (duration > maxDur + 1) {
+        throw new NonRetryableError(`Video terlalu panjang (${Math.round(duration)} detik). Maksimal ${maxDur} detik.`);
+      }
+
+      const segs = planSegments(env, duration);
 
       statusId = await step.do(
         "kirim status",
@@ -281,18 +345,12 @@ export class MotionPipeline extends WorkflowEntrypoint {
         async () => {
           const m = await tg(env, "sendMessage", {
             chat_id: p.chatId,
-            text: `Memproses video (${segs.length} bagian), sekitar ${Math.max(1, segs.length)}-${segs.length * 2} menit...`,
+            text: `Video ${duration ? fmt(+duration.toFixed(1)) + " detik" : "(durasi tidak terbaca)"}, diproses ${segs.length} bagian, sekitar ${Math.max(1, segs.length)}-${segs.length * 2} menit...`,
             reply_to_message_id: p.messageId,
             allow_sending_without_reply: true,
           });
           return m.message_id;
         },
-      );
-
-      const filePath = await step.do(
-        "siapkan file",
-        { retries: { limit: 2, delay: "3 seconds" }, timeout: "30 seconds" },
-        async () => (await tg(env, "getFile", { file_id: p.fileId })).file_path,
       );
 
       // tiap segmen: ambil frame + analisis dalam SATU step, hanya teks yang disimpan (hindari batas 1 MiB per step)
