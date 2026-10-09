@@ -23,6 +23,8 @@ CAMERA: judge camera movement by comparing fixed background landmarks between fr
 
 FRAME POSITION: where the subject sits in the frame at the start and the end of the segment (left / center / right, size relative to frame).
 
+ENVIRONMENT NEEDS: what the motion physically requires from its surroundings, based on what is visible: ground contact and surface type (floor, grass, sand, stairs, water), how much open space the subject uses, props or furniture the subject touches or moves around, lighting direction and mood, and whether the camera move depends on background depth (parallax) or on a clear path. Describe the needs, not the exact background of the reference.
+
 CUTS: any hard cut or scene change, with its time. Write "none" if there is none.
 
 END STATE: pose, position in frame, motion still in progress, and camera state at the last frame (used to continue the next segment).
@@ -30,7 +32,7 @@ END STATE: pose, position in frame, motion still in progress, and camera state a
 UNCERTAIN: what could not be determined.`;
 
 const FINAL_SYSTEM = `You write prompts for image-to-video models.
-The start image already defines the subject's appearance, clothes and background, so do NOT redescribe them. Say "the subject" and describe only MOTION and CAMERA.
+The start image defines the subject's appearance and clothes, so do NOT redescribe them. Say "the subject" and describe only MOTION and CAMERA in the clip prompts. The background of the reference video is NOT required: you recommend the best background for the output video instead (see BACKGROUND RECOMMENDATION).
 
 You get segment-by-segment motion analyses of one reference video. Each segment is one clip. Convert them into the output below. Use only what the analyses say. Do not add motion that was not observed. If a segment is marked as failed, say so briefly and skip it.
 
@@ -38,8 +40,14 @@ Output format (plain text, no markdown symbols):
 
 OVERVIEW: 2-3 lines on the overall action, pacing and camera of the whole video.
 
+BACKGROUND RECOMMENDATION: choose backgrounds that make this exact motion and camera easiest for an image-to-video model to render cleanly, using the ENVIRONMENT NEEDS in the analyses (ground surface, open space, props, lighting, parallax). Prefer simple, uncluttered, coherent backgrounds with a clear depth and a stable ground plane; avoid busy patterns, crowds, thin repeating lines, reflections and water surfaces unless the motion needs them, because they cause warping and flicker.
+BEST PICK: one background, in one line, then 2-3 short lines on why it fits (space, ground, lighting, camera).
+ALTERNATIVE 1 and ALTERNATIVE 2: one line each with a different mood, plus one short reason each.
+START IMAGE PROMPT: one English paragraph for an image generator describing the BEST PICK background, lighting, time of day and composition (where the subject stands in the frame, with enough room for the motion and the camera move), with the subject left as "the subject". Do not describe the subject's looks.
+If the user's note names a background, use it as BEST PICK and add one line of warning only if it conflicts with the motion.
+
 CLIP 1 (0-5s):
-PROMPT: one paragraph in English, present tense, motion + camera in order, with natural physics, believable weight and momentum, smooth easing, subtle micro-movements, consistent identity. No exaggerated or surreal motion.
+PROMPT: one paragraph in English, present tense, motion + camera in order, consistent with the BEST PICK background (for example ground contact and depth for parallax, but do not redescribe the background), with natural physics, believable weight and momentum, smooth easing, subtle micro-movements, consistent identity. No exaggerated or surreal motion.
 (repeat for every segment. For clip 2 and later, begin from the end state of the previous clip. The start image of each later clip should be the last frame of the previous clip.)
 
 NEGATIVE PROMPT: short comma separated list (e.g. morphing, warping, extra limbs, jitter, flicker, unnatural speed, identity change, text, watermark).
@@ -63,6 +71,7 @@ const STYLE_RULES = {
 const HELP = `Kirim video (maks 30 detik, maks 20MB). Bot memecah video per 5 detik, menganalisis tiap bagian, lalu menulis prompt per clip.
 
 Caption = catatan tambahan (opsional), contoh: "kamera pelan, gerakan lebih lambat".
+Mau background tertentu? Tulis di caption, contoh: "background: pantai sore". Kalau kosong, bot merekomendasikan background terbaik.
 
 Hashtag di caption untuk gaya prompt:
 #tags = tag singkat
