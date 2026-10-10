@@ -20,8 +20,8 @@
 
   // non-rahasia. Rahasia (token/key) diisi lewat dashboard sebagai Secret
   "vars": {
-    "VISION_MODELS": "grok-4.6,qwen3.8-27b,mimo-v2.5",
-    "TEXT_MODELS": "jev-1.13,nemotron-3-super",
+    "VISION_MODELS": "claude-sonnet-4-6,grok-4.7,qwen3.8-27b",
+    "TEXT_MODELS": "claude-sonnet-4-6,nemotron-3-ultra,qwen3.7-plus",
     "MAX_DURATION": "30",      // detik, video lebih panjang ditolak
     "SEGMENT_SECONDS": "5",    // video dipecah per bagian segini detik (= panjang 1 clip hasil)
     "FRAME_INTERVAL": "",      // detik antar frame. Kosong = otomatis (0.5s utk <=10s, 0.75s utk <=20s, 1s utk >20s)
