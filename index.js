@@ -29,7 +29,9 @@ CUTS: any hard cut or scene change, with its time. Write "none" if there is none
 
 END STATE: pose, position in frame, motion still in progress, and camera state at the last frame (used to continue the next segment).
 
-UNCERTAIN: what could not be determined.`;
+UNCERTAIN: what could not be determined (one line).
+
+LENGTH RULE: be concise. Merge similar frames into fewer beats (max 6 beats per segment), one short line per body part, skip body parts that are not visible. Total under 450 words. ALWAYS finish with END STATE and UNCERTAIN.`;
 
 const FINAL_SYSTEM = `You write prompts for image-to-video models.
 The start image defines the subject's appearance and clothes, so do NOT redescribe them. Say "the subject" and describe only MOTION and CAMERA in the clip prompts. The background of the reference video is NOT required: you recommend the best background for the output video instead (see BACKGROUND RECOMMENDATION).
@@ -113,9 +115,9 @@ async function sendLong(env, chatId, text, replyTo) {
   }
 }
 
-async function chat(env, models, messages, { maxTokens = 1500, temperature = 0.4 } = {}) {
+async function chat(env, models, messages, { maxTokens = 1500, temperature = 0.4, timeoutMs = 90000 } = {}) {
   const base = String(env.JEROUTER_BASE_URL || "").replace(/\/+$/, "");
-  let lastErr;
+  const errors = [];
   for (const model of models) {
     try {
       const r = await fetch(`${base}/chat/completions`, {
@@ -125,23 +127,30 @@ async function chat(env, models, messages, { maxTokens = 1500, temperature = 0.4
           authorization: `Bearer ${env.JEROUTER_API_KEY}`,
         },
         body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature }),
-        signal: AbortSignal.timeout(150000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 150)}`);
       const data = await r.json();
-      let text = data?.choices?.[0]?.message?.content;
+      const choice = data?.choices?.[0];
+      let text = choice?.message?.content;
       if (Array.isArray(text)) text = text.map((p) => p?.text || "").join("");
-      if (typeof text === "string" && text.trim()) {
-        console.log(`ok model=${model}`);
-        return text.trim();
+      if (typeof text === "string") {
+        // buang blok reasoning kalau model menyertakannya di content
+        text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^[\s\S]*?<\/think>/i, "").trim();
       }
-      throw new Error("respon kosong");
+      if (text) {
+        if (choice?.finish_reason === "length") console.warn(`model ${model}: output terpotong (max_tokens)`);
+        console.log(`ok model=${model}`);
+        return text;
+      }
+      throw new Error(`respon kosong (finish_reason=${choice?.finish_reason || "?"})`);
     } catch (e) {
-      console.warn(`model ${model} gagal: ${e.message}`);
-      lastErr = e;
+      const msg = e?.name === "TimeoutError" ? `timeout ${Math.round(timeoutMs / 1000)}s` : e.message;
+      console.warn(`model ${model} gagal: ${msg}`);
+      errors.push(`${model}: ${msg}`);
     }
   }
-  throw new Error(`Semua model gagal: ${lastErr?.message}`);
+  throw new Error(`Semua model gagal -> ${errors.join(" | ")}`);
 }
 
 // ------------------------------------------------------------------ durasi video
@@ -271,12 +280,12 @@ async function analyzeSegment(env, p, seg, total, filePath, prevEnd) {
 
   return chat(
     env,
-    list(env.VISION_MODELS, "grok-4.6,qwen3.8-27b,mimo-v2.5"),
+    list(env.VISION_MODELS, "claude-sonnet-4-6,grok-4.7,qwen3.8-27b"),
     [
       { role: "system", content: VISION_SYSTEM },
       { role: "user", content },
     ],
-    { maxTokens: 2200, temperature: 0.2 },
+    { maxTokens: 4000, temperature: 0.2, timeoutMs: 120000 },
   );
 }
 
@@ -292,12 +301,12 @@ async function writePrompt(env, merged, p, total) {
   if (p.note) user += `\n\nUser note: ${p.note}`;
   return chat(
     env,
-    list(env.TEXT_MODELS, "jev-1.13,nemotron-3-super"),
+    list(env.TEXT_MODELS, "claude-sonnet-4-6,nemotron-3-ultra,qwen3.7-plus"),
     [
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    { maxTokens: 3500, temperature: 0.5 },
+    { maxTokens: 8000, temperature: 0.5, timeoutMs: 120000 },
   );
 }
 
@@ -391,12 +400,12 @@ export class MotionPipeline extends WorkflowEntrypoint {
       try {
         result = await step.do(
           "tulis prompt",
-          { retries: { limit: 1, delay: "5 seconds" }, timeout: "6 minutes" },
+          { retries: { limit: 0 }, timeout: "9 minutes" },
           () => writePrompt(env, merged, p, analyses.length),
         );
       } catch (e) {
         console.warn(`tahap tulis prompt gagal: ${e.message}`);
-        result = "(Tahap penulisan prompt gagal, ini hasil analisis mentah per bagian)\n\n" + merged;
+        result = `(Tahap penulisan prompt gagal: ${String(e.message).slice(0, 400)})\n\n` + merged;
       }
 
       await step.do(
