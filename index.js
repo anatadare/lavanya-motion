@@ -27,11 +27,22 @@ ENVIRONMENT NEEDS: what the motion physically requires from its surroundings, ba
 
 CUTS: any hard cut or scene change, with its time. Write "none" if there is none.
 
+SETUP (full detail in segment 1; in later segments write only what changed, or "unchanged"):
+- ORIENTATION: portrait / landscape / square.
+- VISIBLE BODY: which body parts are inside the frame (e.g. head and shoulders, waist up, full body), shot distance, subject size and position in frame.
+- START POSE: exact pose at the first frame: seated / standing / lying, facing direction, head angle, arm and hand positions, expression.
+- PEOPLE: number of people visible.
+- PROPS: objects the subject holds or touches (e.g. a phone), which hand, and whether the object itself is visible in frame.
+- SPEECH: time ranges where the mouth appears to be speaking, versus smiling or silent.
+- CLOTHING PHYSICS: loose cloth, scarf or hijab, hair, jewelry, and how they move.
+
+RISKS: list any that apply: hard cut, more than one person, face or hands hidden or leaving the frame, very fast motion or blur, subject leaving the frame, fast camera move, strong lighting change. Write "none" if none.
+
 END STATE: pose, position in frame, motion still in progress, and camera state at the last frame (used to continue the next segment).
 
 UNCERTAIN: what could not be determined (one line).
 
-LENGTH RULE: be concise. Merge similar frames into fewer beats (max 6 beats per segment), one short line per body part, skip body parts that are not visible. Total under 450 words. ALWAYS finish with END STATE and UNCERTAIN.`;
+LENGTH RULE: be concise. Merge similar frames into fewer beats (max 6 beats per segment), one short line per body part, skip body parts that are not visible. Total under 600 words. ALWAYS finish with END STATE and UNCERTAIN.`;
 
 const FINAL_SYSTEM = `You write prompts for image-to-video models.
 The start image defines the subject's appearance and clothes, so do NOT redescribe them. Say "the subject" and describe only MOTION and CAMERA in the clip prompts. The background of the reference video is NOT required: you recommend the best background for the output video instead (see BACKGROUND RECOMMENDATION).
@@ -59,6 +70,36 @@ SETTINGS: for each clip, duration in seconds, motion strength (low / medium / hi
 {style_rule}
 If the user gave an extra note, follow it. Use the real time ranges from the segment labels.`;
 
+const CONTROL_SYSTEM = `You prepare inputs for MOTION CONTROL / motion capture video generation (for example Kling Motion Control). In this mode the model copies the body and face motion directly from the uploaded reference video, and the character comes from a still start image. So the text prompt must NOT describe the motion in detail. It only describes what the reference video cannot supply: scene, background, lighting, mood and camera look.
+
+You get segment-by-segment analyses of ONE reference video. Use only what they say. Do not invent. If a segment is marked as failed, mention it in RISIKO.
+
+Write the section labels and notes in Indonesian. Write every PROMPT and the NEGATIVE PROMPT in English. Plain text, no markdown symbols. Use exactly this structure:
+
+KECOCOKAN REFERENSI:
+- Orientasi dan durasi: orientation and total duration. Remind the user that motion control usually follows the reference length and that the platform duration limit must be checked.
+- Framing: which body parts are visible, shot distance, subject position in frame. Say clearly that the start image must use the SAME framing (for example a close selfie framing, not a full-body image) or the result will warp.
+- Pose awal: the exact pose in the first frame. The start image must begin in this same pose.
+- Properti: held or touched objects and which hand. Say whether the object should appear in the start image (a phone held toward the camera is often rendered badly, so recommend whether to keep it visible or leave it out).
+- Mulut dan bicara: time ranges where the subject speaks, if any. Audio is ignored, so give both options: keep the mouth movement from the reference, or ask for a closed or relaxed mouth.
+- Kamera: say whether the camera is static, handheld or moving. If it is handheld with shake, give both options (keep a subtle handheld feel versus stabilized) and recommend one.
+- Kain dan pakaian: loose cloth, scarf, hair motion. Note that a different outfit type in the start image can behave differently from the reference.
+
+RISIKO: a short bullet list ("-") of problems that often make motion control fail, based ONLY on the analyses (cuts, more than one person, hidden face or hands, fast motion, subject leaving frame, lighting changes, failed segments). If there are none, write "Tidak ada risiko besar yang terdeteksi."
+
+START IMAGE PROMPT:
+BEST PICK: one background in one line, then 1-2 short lines on why it fits (space, ground, lighting). Choose a simple uncluttered coherent background that suits the framing and camera. If the user's note names a background, use it and warn in one line only if it conflicts.
+ALTERNATIVE 1 and ALTERNATIVE 2: one line each.
+PROMPT: one English paragraph for an image generator: background, lighting, time of day, composition matching the framing, the START POSE and any prop decision above. Refer to the character only as "the subject". Do not describe looks, face or clothes.
+
+PROMPT: one short English paragraph, 40-80 words, for the video model. Scene, lighting, mood and camera look only, consistent with the BEST PICK background. At most one short clause naming the overall action for context. No step-by-step motion. Natural physics, consistent identity.
+
+NEGATIVE PROMPT: short comma separated English list (e.g. morphing, warping, extra limbs, jitter, flicker, identity change, distorted hands, text, watermark).
+
+CATATAN: 2-3 short lines in Indonesian with practical tips for this video (reference upload, start image matching, what to do about the main risk).
+
+If the user gave an extra note, follow it.`;
+
 const STYLE_RULES = {
   natural: "PROMPT style: fluent natural sentences, 60-120 words per clip.",
   tags: "PROMPT style: short comma separated tags and phrases, under 60 words per clip.",
@@ -78,7 +119,9 @@ Mau background tertentu? Tulis di caption, contoh: "background: pantai sore". Ka
 Hashtag di caption untuk gaya prompt:
 #tags = tag singkat
 #kling  #runway  #wan  #veo = menyesuaikan gaya model itu
-Tanpa hashtag = kalimat natural.`;
+Tanpa hashtag = kalimat natural.
+
+#control = mode Motion Control / motion capture. Gerakan diambil dari video referensi, jadi hasilnya pendek: cek kecocokan referensi (framing, pose awal, properti, mulut, kamera), daftar risiko, START IMAGE PROMPT, PROMPT scene + kamera, dan NEGATIVE PROMPT.`;
 
 const MAX_VIDEO_BYTES = 20 * 1024 * 1024; // batas download bot Telegram
 
@@ -296,7 +339,10 @@ function endState(text) {
 }
 
 async function writePrompt(env, merged, p, total) {
-  const system = FINAL_SYSTEM.replace("{style_rule}", STYLE_RULES[p.style] || STYLE_RULES.natural);
+  const system =
+    p.mode === "control"
+      ? CONTROL_SYSTEM
+      : FINAL_SYSTEM.replace("{style_rule}", STYLE_RULES[p.style] || STYLE_RULES.natural);
   let user = `Reference video: ${p.duration || "unknown"}s, ${total} segment(s).\n\n${merged}`;
   if (p.note) user += `\n\nUser note: ${p.note}`;
   return chat(
@@ -482,6 +528,11 @@ async function handleUpdate(update, env) {
 
   let note = (msg.caption || "").trim();
   let style = "natural";
+  let mode = "prompt";
+  if (/#control\b/i.test(note)) {
+    mode = "control";
+    note = note.replace(/#control\b/gi, "").trim();
+  }
   const tag = note.match(/#(tags|kling|runway|wan|veo)\b/i);
   if (tag) {
     style = tag[1].toLowerCase();
@@ -498,6 +549,7 @@ async function handleUpdate(update, env) {
         duration: media.duration || 0,
         note,
         style,
+        mode,
       },
     });
   } catch (e) {
