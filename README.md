@@ -33,6 +33,7 @@ Alur: Telegram webhook -> Worker -> Workflow (ambil frame lewat Media binding ->
 - Kirim video (maks 20MB, ideal 3-10 detik).
 - Caption = catatan tambahan, mis. `gerakan lebih lambat, kamera tetap`.
 - Tambah `#tags` di caption untuk prompt berbentuk tag singkat.
+- Tambah `#control` di caption untuk mode Motion Control: cek kecocokan referensi, risiko, START IMAGE PROMPT, PROMPT scene+kamera, NEGATIVE PROMPT.
 
 ## Ganti model / setting
 
